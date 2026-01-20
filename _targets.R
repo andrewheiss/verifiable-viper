@@ -5,6 +5,11 @@ library(tarchetypes)
 
 set.seed(847322)  # From random.org
 
+options(
+  tidyverse.quiet = TRUE,
+  dplyr.summarise.inform = FALSE
+)
+
 ## Bayesian stuff ----
 suppressPackageStartupMessages(library(brms))
 options(
@@ -15,7 +20,7 @@ options(
 ## General pipeline options ----
 tar_option_set(
   # Packages loaded in every pipeline run
-  packages = c("tibble"),
+  packages = c("tidyverse"),
   format = "qs"  # Use qs as the default storage format
 )
 
@@ -49,6 +54,48 @@ is_docker <- identical(Sys.getenv("IS_DOCKER"), "TRUE")
 # Pipeline ---------------------------------------------------------------------
 
 list(
+  ## Raw data files ----
+  tar_target(
+    chaudhry_raw_file,
+    here_rel("data", "raw_data", "Chaudhry restrictions", "Updated NGO data.xlsx"),
+    format = "file"
+  ),
+
+  ## Process and clean data ----
+  ### Skeletons and lookups ----
+  tar_target(chaudhry_raw, load_chaudhry_raw(chaudhry_raw_file)),
+  tar_target(regulations, create_regulation_lookup()),
+  tar_target(democracies, create_consolidated_democracies()),
+  tar_target(skeleton, create_panel_skeleton(democracies, chaudhry_raw)),
+
+  ### OECD and USAID ----
+
+
+  ### NGO restrictions ----
+  tar_target(chaudhry_clean, load_clean_chaudhry(chaudhry_raw, regulations)),
+
+  ### Other data sources ----
+
+  ### Combine and lag data ----
+
+  ### Map and Civicus ----
+
+  ## Variable details ----
+
+  ## Models ----
+
+  ## Manuscript and analysis notebook ----
+  # tar_quarto(manuscript, path = "manuscript", quiet = FALSE),
+
+  # tar_quarto(website, path = ".", quiet = FALSE),
+  # tar_target(deploy_script, here_rel("deploy.sh"), format = "file", cue = tar_cue_skip(!should_deploy)),
+  # tar_target(deploy, {
+  #   # Force a dependency
+  #   website
+  #   # Run the deploy script
+  #   if (should_deploy) processx::run(paste0("./", deploy_script))
+  # }, cue = tar_cue_skip(!should_deploy)),
+
   ## Render the README ----
   tar_quarto(readme, here_rel("README.qmd"))
 )

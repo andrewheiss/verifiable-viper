@@ -1,0 +1,302 @@
+
+# Lookup tables -----------------------------------------------------------
+
+create_consolidated_democracies <- function() {
+  library(countrycode)
+
+  consolidated_democracies <-
+    tibble(
+      country_name = c(
+        "Andorra", "Australia", "Austria", "Bahamas", "Barbados", "Belgium",
+        "Canada", "Denmark", "Finland", "France", "Germany", "Greece", 
+        "Grenada", "Iceland", "Ireland", "Italy", "Japan", "Liechtenstein",
+        "Luxembourg", "Malta", "Monaco", "Netherlands", "New Zealand",
+        "Norway", "San Marino", "Spain", "Sweden", "Switzerland",
+        "United Kingdom", "United States of America"
+      )
+    ) |>
+    # Ignore these 5 microstates, since they're not in the panel skeleton
+    filter(
+      !(country_name %in%
+        c("Andorra", "Grenada", "Liechtenstein", "Monaco", "San Marino"))
+    ) |>
+    mutate(
+      iso3 = countrycode(country_name, "country.name", "iso3c"),
+      gwcode = countrycode(country_name, "country.name", "gwn")
+    )
+
+  return(consolidated_democracies)
+}
+
+create_regulation_lookup <- function() {
+  regulations <- tribble(
+    ~question, ~barrier,       ~question_clean,                  ~ignore_in_index, ~question_display,
+    "q1a",     "association",  "const_assoc",                    TRUE,             "Constitutional associational rights",
+    "q1b",     "association",  "political_parties",              TRUE,             "Citizens form political parties",
+    "q2a",     "entry",        "ngo_register",                   TRUE,             "NGO registration required",
+    "q2b",     "entry",        "ngo_register_burden",            FALSE,            "NGO registration burdensome",
+    "q2c",     "entry",        "ngo_register_appeal",            FALSE,            "NGO registration appealXXXnot allowed",
+    "q2d",     "entry",        "ngo_barrier_foreign_funds",      FALSE,            "Registration barriers differentXXXif foreign funds involved",
+    "q3a",     "funding",      "ngo_disclose_funds",             TRUE,             "Funds must be disclosed",
+    "q3b",     "funding",      "ngo_foreign_fund_approval",      FALSE,            "Prior approval requiredXXXfor foreign funds",
+    "q3c",     "funding",      "ngo_foreign_fund_channel",       FALSE,            "Foreign funds channeledXXXthrough government",
+    "q3d",     "funding",      "ngo_foreign_fund_restrict",      FALSE,            "Foreign funds restricted",
+    "q3e",     "funding",      "ngo_foreign_fund_prohibit",      FALSE,            "Foreign funds prohibited",
+    "q3f",     "funding",      "ngo_type_foreign_fund_prohibit", FALSE,            "Foreign funds prohibitedXXXfor some types of NGOs",
+    "q4a",     "advocacy",     "ngo_politics",                   FALSE,            "NGOs restricted from politics",
+    "q4b",     "advocacy",     "ngo_politics_intimidation",      TRUE,             "NGOs intimidated from politics",
+    "q4c",     "advocacy",     "ngo_politics_foreign_fund",      FALSE,            "Political barriers differentXXXif foreign funds involved"
+  )
+
+  return(regulations)
+}
+
+
+# Panel skeleton ----------------------------------------------------------
+
+load_chaudhry_raw <- function(path) {
+  library(readxl)
+  library(countrycode)
+
+  # In this data Sudan (625) splits into North Sudan (626) and South Sudan (525)
+  # in 2011, but in the other datasets regular Sudan stays 625 and South Sudan
+  # becomes 626, so adjust the numbers here
+  #
+  # Also, Chad is in the dataset, but most values are missing, so we drop it
+  chaudhry_raw <- suppressMessages(read_excel(path)) |>
+    select(1:15) |>
+    filter(ccode != 483) |> # Remove Chad
+    # Fix Sudan
+    mutate(
+      ccode = case_when(
+        country == "South Sudan" ~ 626,
+        country == "Sudan" ~ 625,
+        TRUE ~ ccode
+      )
+    ) |>
+    # Make GW code column
+    mutate(
+      gwcode = countrycode(
+        ccode,
+        origin = "cown",
+        destination = "gwn",
+        custom_match = c(
+          "679" = 678L, # Yemen
+          "818" = 816L, # Vietnam
+          "816" = 816L, # Vietnam
+          "342" = 345L, # Serbia
+          "341" = 347L, # Kosovo
+          "348" = 341L, # Montenegro
+          "315" = 316L  # Czechia
+        )
+      )
+    )
+
+  return(chaudhry_raw)
+}
+
+create_panel_skeleton <- function(consolidated_democracies, chaudhry_raw) {
+  library(states)
+  library(countrycode)
+
+  microstates <- gwstates |>
+    filter(microstate) |> 
+    distinct(gwcode) |> 
+    as_tibble()
+
+  chaudhry_countries <- chaudhry_raw |> distinct(gwcode)
+
+  # In both COW and GW codes, modern Vietnam is 816, but countrycode() thinks the
+  # COW code is 817, which is old South Vietnam (see issue
+  # https://github.com/vincentarelbundock/countrycode/issues/16), so we use
+  # custom_match to force 816 to recode to 816
+  #
+  # Also, following Gleditsch and Ward, we treat Serbia after 2006 dissolution of
+  # Serbia & Montenegro as 345 in COW codes (see
+  # https://www.andybeger.com/states/articles/differences-gw-cow.html)
+  #
+  # Following V-Dem, we treat Czechoslovakia (GW/COW 315) and Czech Republic
+  # (GW/COW 316) as the same continuous country (V-Dem has both use ID 157).
+  #
+  # Also, because the World Bank doesn't include it in the WDI, we omit
+  # Taiwan (713). We also omit East Germany (265) and South Yemen (680).
+  panel_skeleton_all <- state_panel(1980, 2024, partial = "any") |>
+    # Remove microstates
+    filter(!(gwcode %in% microstates$gwcode)) |>
+    # Remove East Germany, South Yemen, Taiwan, the Bahamas, Belize, and Brunei
+    filter(!(gwcode %in% c(265, 680, 713, 31, 80, 835))) |>
+    # Deal with Czechia
+    mutate(gwcode = recode(gwcode, `315` = 316L)) |>
+    mutate(
+      cowcode = countrycode(
+        gwcode,
+        origin = "gwn",
+        destination = "cown",
+        custom_match = c("816" = 816L, "340" = 345L)
+      ),
+      country = countrycode(
+        cowcode,
+        origin = "cown",
+        destination = "country.name",
+        custom_match = c("678" = "Yemen")
+      ),
+      iso2 = countrycode(
+        cowcode,
+        origin = "cown",
+        destination = "iso2c",
+        custom_match = c("345" = "RS", "347" = "XK", "678" = "YE")
+      ),
+      iso3 = countrycode(
+        cowcode,
+        origin = "cown",
+        destination = "iso3c",
+        custom_match = c("345" = "SRB", "347" = "XKK", "678" = "YEM")
+      ),
+      # Use 999 as the UN country code for Kosovo
+      un = countrycode(
+        cowcode,
+        origin = "cown",
+        destination = "un",
+        custom_match = c("345" = 688, "347" = 999, "678" = 887)
+      ),
+      region = countrycode(cowcode, origin = "cown", destination = "region"),
+      un_region = countrycode(
+        cowcode,
+        origin = "cown",
+        destination = "un.region.name",
+        custom_match = c("345" = "Europe", "347" = "Europe", "678" = "Asia")
+      ),
+      un_subregion = countrycode(
+        cowcode,
+        origin = "cown",
+        destination = "un.regionsub.name",
+        custom_match = c(
+          "345" = "Eastern Europe",
+          "347" = "Eastern Europe",
+          "678" = "Western Asia"
+        )
+      )
+    ) |>
+    # There are two entries for "Yugoslavia" in 2006 after recoding 340 as 345;
+    # get rid of one
+    filter(!(gwcode == 340 & cowcode == 345 & year == 2006)) |>
+    # Make Serbia 345 in GW codes too, for joining with other datasets
+    mutate(gwcode = recode(gwcode, `340` = 345L)) |>
+    mutate(country = recode(country, `Yugoslavia` = "Serbia")) |>
+    arrange(gwcode, year)
+
+  panel_skeleton <- panel_skeleton_all |> 
+    filter(gwcode %in% chaudhry_countries$gwcode) |> 
+    filter(!(gwcode %in% consolidated_democracies$gwcode)) |> 
+    as_tibble()
+
+  skeleton_lookup <- panel_skeleton |> 
+    group_by(
+      gwcode, cowcode, country, iso2, iso3, un, 
+      region, un_region, un_subregion
+    ) |> 
+    summarize(years_included = n()) |> 
+    ungroup() |> 
+    arrange(country)
+
+  return(lst(panel_skeleton, panel_skeleton_all, microstates, skeleton_lookup))
+}
+
+
+# NGO restrictions --------------------------------------------------------
+
+load_clean_chaudhry <- function(chaudhry_raw, regulations) {
+  suppressPackageStartupMessages(library(scales))
+
+  chaudhry_2024 <- expand_grid(
+    gwcode = unique(chaudhry_raw$gwcode),
+    year = 2024
+  )
+
+  chaudhry_long <- chaudhry_raw |>
+    # Bring in 2024 rows
+    bind_rows(chaudhry_2024) |>
+    # Ethiopia and Czech Republic have duplicate rows in 1993 and 1994 respectively,
+    # but the values are identical, so just keep the first of the two
+    group_by(gwcode, year) |>
+    slice(1) |>
+    ungroup() |>
+    arrange(gwcode, year) |>
+    # Bring country details forward
+    group_by(gwcode) |>
+    fill(ccode, country) |>
+    ungroup() |>
+    # Reverse values for q2c
+    mutate(q2c = 1 - q2c) |>
+    # Rescale 2-point questions to 0-1 scale
+    mutate(across(c(q3e, q3f, q4a), \(x) {
+      rescale(x, to = c(0, 1), from = c(0, 2))
+    })) |>
+    # q2d and q4c use -1 to indicate less restriction/burdensomeness. Since we're
+    # concerned with an index of restriction, we make the negative values zero
+    mutate(across(c(q2d, q4c), \(x) ifelse(x == -1, 0, x))) |>
+    pivot_longer(cols = starts_with("q"), names_to = "question") |>
+    left_join(regulations, by = join_by("question")) |>
+    group_by(gwcode) |>
+    mutate(all_missing = all(is.na(value))) |>
+    group_by(gwcode, question) |>
+    # Bring most recent legislation forward in time
+    fill(value) |>
+    # For older NA legislation that can't be brought forward, set sensible
+    # defaults. Leave countries that are 100% 0 as NA.
+    mutate(value = ifelse(!all_missing & is.na(value), 0, value)) |>
+    ungroup()
+
+  chaudhry_registration <- chaudhry_long |>
+    select(gwcode, year, question_clean, value) |>
+    pivot_wider(names_from = "question_clean", values_from = "value")
+
+  chaudhry_summed <- chaudhry_long |>
+    filter(!ignore_in_index) |>
+    group_by(gwcode, year, barrier) |>
+    summarize(total = sum(value)) |>
+    ungroup()
+
+  chaudhry_clean <- chaudhry_summed |>
+    pivot_wider(names_from = barrier, values_from = total) |>
+    mutate(across(
+      c(entry, funding, advocacy),
+      list(std = \(x) x / max(x, na.rm = TRUE))
+    )) |>
+    mutate(
+      barriers_total = advocacy + entry + funding,
+      barriers_total_std = advocacy_std + entry_std + funding_std
+    ) |>
+    left_join(chaudhry_registration, by = c("gwcode", "year"))
+
+  # In Suparna's clean data, due to post-Cold War chaos, Russia (365) is missing
+  # for 1990-1991 and Serbia/Serbia and Montenegro/Yugoslavia (345) is missing
+  # every thing pre-2006. DCJW don't include any data for Serbia, so we're out
+  # of luck there—we're limited to Serbia itself and not past versions of it.
+  # DCJW *do* include data for Russia, though, so we use that in our clean final
+  # NGO laws data. Fortunately this is easy, since Russia's values are all 0 for
+  # those two years. We just add two rows for Russia in 1990 and 1991 from DCJW
+  #
+  # Additionally, Suparna's final data is missing Ivory Coast (437) in 1990, but
+  # it existed in previous versions, so it's just a typo. It's also all 0s.
+  final_fixes <- tibble(
+    gwcode = c(365, 365, 437),
+    year = c(1990, 1991, 1990)
+  ) |>
+    mutate(
+      advocacy = 0,
+      entry = 0,
+      funding = 0,
+      entry_std = 0,
+      funding_std = 0,
+      advocacy_std = 0,
+      barriers_total = 0,
+      barriers_total_std = 0
+    )
+
+  chaudhry_clean <- chaudhry_clean |> 
+    bind_rows(final_fixes) |> 
+    arrange(gwcode, year)
+
+  return(chaudhry_clean)
+}
