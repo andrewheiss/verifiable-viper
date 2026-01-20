@@ -105,6 +105,26 @@ list(
     ),
     format = "file"
   ),
+  tar_target(
+    ucdp_raw_file,
+    here_rel(
+      "data",
+      "raw_data",
+      "UCDP PRIO",
+      "UcdpPrioConflict_v25_1.csv"
+    ),
+    format = "file"
+  ),
+  tar_target(
+    disasters_raw_file,
+    here_rel(
+      "data",
+      "raw_data",
+      "Disasters",
+      "public_emdat_custom_request_2026-01-20_7545664b-0e1b-4634-a6d8-e852c266534e.xlsx"
+    ),
+    format = "file"
+  ),
 
   ## Process and clean data ----
   ### Skeletons and lookups ----
@@ -130,6 +150,11 @@ list(
       un_gdp_current_raw_file,
       skeleton
     )
+  ),
+  tar_target(ucdp_prio_clean, load_clean_ucdp(ucdp_raw_file)),
+  tar_target(
+    disasters_summarized,
+    load_clean_disasters(disasters_raw_file, skeleton)
   ),
 
   ### Combine and lag data ----

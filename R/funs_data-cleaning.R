@@ -536,3 +536,77 @@ load_clean_un_gdp <- function(path_constant, path_current, skeleton) {
 
   return(un_gdp_final)
 }
+
+
+# UCDP --------------------------------------------------------------------
+
+load_clean_ucdp <- function(path) {
+  ucdp_prio_raw <- read_csv(path, col_types = cols())
+
+  ucdp_prio_clean <- ucdp_prio_raw |>
+    filter(type_of_conflict == 3) |> # Intrastate conflict
+    mutate(gwcode_raw = str_split(gwno_a, pattern = ", ")) |>
+    unnest(gwcode_raw) |>
+    mutate(gwcode = as.integer(gwcode_raw)) |>
+    group_by(gwcode, year) |>
+    summarize(internal_conflict = n() > 0) |>
+    ungroup()
+
+  return(ucdp_prio_clean)
+}
+
+
+# EM-DAT disasters --------------------------------------------------------
+
+load_clean_disasters <- function(path, skeleton) {
+  library(readxl)
+  library(countrycode)
+
+  disasters_raw <- read_excel(path, guess_max = 10000)
+
+  disasters <- disasters_raw |>
+    # Only look at countries in the main panel
+    filter(ISO %in% unique(skeleton$panel_skeleton$iso3)) |>
+    mutate(
+      gwcode = countrycode(
+        ISO,
+        origin = "iso3c",
+        destination = "gwn",
+        custom_match = c("YEM" = "678")
+      ),
+      gwcode = as.numeric(gwcode),
+      year = as.numeric(str_sub(`DisNo.`, 1, 4))
+    ) |>
+    select(
+      country = Country,
+      year,
+      iso3 = ISO,
+      gwcode,
+      type = `Disaster Type`,
+      group = `Disaster Group`,
+      subgroup = `Disaster Subgroup`,
+      dis_deaths = `Total Deaths`,
+      dis_injured = `No. Injured`,
+      dis_affected = `No. Affected`,
+      dis_homeless = `No. Homeless`,
+      dis_total_affected = `Total Affected`,
+      dis_total_damage = `Total Damage ('000 US$)`
+    )
+
+  disasters_summarized <- disasters |>
+    group_by(gwcode, year, group) |>
+    summarize(
+      across(starts_with("dis_"), \(x) sum(x, na.rm = TRUE)),
+      dis_count = n()
+    ) |>
+    ungroup() |>
+    filter(group == "Natural") |>
+    pivot_longer(names_to = "name", values_to = "value", starts_with("dis_")) |>
+    mutate(group = str_to_lower(group)) |>
+    unite(name, group, name) |>
+    pivot_wider(names_from = "name", values_from = "value") |>
+    mutate(year = as.numeric(year)) |>
+    filter(year > 1980)
+
+  return(disasters_summarized)
+}
