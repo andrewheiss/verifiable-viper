@@ -75,6 +75,36 @@ list(
     ),
     format = "file"
   ),
+  tar_target(
+    un_pop_raw_file,
+    here_rel(
+      "data",
+      "raw_data",
+      "UN data",
+      "WPP2024_GEN_F01_DEMOGRAPHIC_INDICATORS_COMPACT.xlsx"
+    ),
+    format = "file"
+  ),
+  tar_target(
+    un_gdp_constant_raw_file,
+    here_rel(
+      "data",
+      "raw_data",
+      "UN data",
+      "UNdata_Export_20260120_063531011.csv"
+    ),
+    format = "file"
+  ),
+  tar_target(
+    un_gdp_current_raw_file,
+    here_rel(
+      "data",
+      "raw_data",
+      "UN data",
+      "UNdata_Export_20260120_063559235.csv"
+    ),
+    format = "file"
+  ),
 
   ## Process and clean data ----
   ### Skeletons and lookups ----
@@ -91,6 +121,16 @@ list(
   ### Other data sources ----
   tar_target(vdem_clean, load_clean_vdem(vdem_raw_file)),
   tar_target(autocracies, build_autocracies(vdem_clean, skeleton)),
+  tar_target(wdi_clean, load_clean_wdi(skeleton)),
+  tar_target(un_pop, load_clean_un_pop(un_pop_raw_file, skeleton, wdi_clean)),
+  tar_target(
+    un_gdp,
+    load_clean_un_gdp(
+      un_gdp_constant_raw_file,
+      un_gdp_current_raw_file,
+      skeleton
+    )
+  ),
 
   ### Combine and lag data ----
 

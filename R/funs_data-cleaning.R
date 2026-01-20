@@ -374,3 +374,165 @@ build_autocracies <- function(vdem, skeleton) {
     left_join(autocracies, by = "gwcode") |> 
     mutate(autocracy = round(avg_row, 0) <= 4)
 }
+
+
+# WDI ---------------------------------------------------------------------
+
+load_clean_wdi <- function(skeleton) {
+  library(WDI)
+  library(countrycode)
+
+  # World Bank World Development Indicators (WDI)
+  # https://datacatalog.worldbank.org/
+  # https://datacatalog.worldbank.org/search/dataset/0037712/world-development-indicators
+  wdi_indicators <- c(
+    gdp_percap = "NY.GDP.PCAP.PP.KD", # GDP per capita, ppp (constant 2021 international $)
+    gdp = "NY.GDP.MKTP.PP.KD", # GDP, ppp (constant 2021 international $)
+    trade_pct_gdp = "NE.TRD.GNFS.ZS", # Trade (% of GDP)
+    population = "SP.POP.TOTL" # Population, total
+  )
+
+  wdi_raw <- WDI(
+    country = "all",
+    wdi_indicators,
+    extra = TRUE,
+    start = 1980,
+    end = 2025
+  )
+
+  wdi_clean <- wdi_raw |>
+    filter(iso2c %in% unique(skeleton$panel_skeleton$iso2)) |>
+    mutate(
+      gwcode = countrycode(
+        iso2c,
+        origin = "iso2c",
+        destination = "gwn",
+        custom_match = c("YE" = 678L, "XK" = 347L, "VN" = 816L, "RS" = 345L)
+      )
+    ) |>
+    mutate(
+      region = ifelse(gwcode == 343, "Europe & Central Asia", region),
+      income = ifelse(gwcode == 343, "Upper middle income", income)
+    ) |>
+    select(country, gwcode, year, region, income, population)
+
+  return(wdi_clean)
+}
+
+
+# UN data -----------------------------------------------------------------
+
+# Population
+# Demographic Indicators Compact (most used: estimates and medium projections)
+# https://population.un.org/wpp/downloads
+load_clean_un_pop <- function(path, skeleton, wdi) {
+  library(countrycode)
+  library(readxl)
+
+  # The UN doesn't have population data for Kosovo, so we use WDI data for that
+  kosovo_population <- wdi |>
+    select(gwcode, year, population) |>
+    filter(gwcode == 347, year >= 2008)
+
+  un_pop_raw <- read_excel(
+    path,
+    range = "Estimates!A17:M22000",
+    guess_max = 3000
+  )
+
+  un_pop <- un_pop_raw |>
+    filter((`Location code` %in% unique(skeleton$panel_skeleton$un))) |>
+    select(
+      country = `Region, subregion, country or area *`,
+      un_code = `Location code`,
+      year = Year,
+      population = `Total Population, as of 1 July (thousands)`
+    ) |>
+    mutate(
+      gwcode = countrycode(
+        un_code,
+        "un",
+        "gwn",
+        custom_match = c("887" = 678)
+      )
+    ) |>
+    mutate(population = as.numeric(population) * 1000) |> # Values are in 1000s
+    select(gwcode, year, population) |>
+    bind_rows(kosovo_population) |>
+    arrange(gwcode, year)
+
+  return(un_pop)
+}
+
+load_clean_un_gdp <- function(path_constant, path_current, skeleton) {
+  library(countrycode)
+
+  # GDP by Type of Expenditure at constant (2015) prices - US dollars
+  # https://data.un.org/Data.aspx?q=gdp&d=SNAAMA&f=grID%3a102%3bcurrID%3aUSD%3bpcFlag%3a0
+  un_gdp_raw <- read_csv(path_constant, col_types = cols()) |>
+    rename(country = `Country or Area`) |>
+    mutate(value_type = "Constant")
+
+  # GDP by Type of Expenditure at current prices - US dollars
+  # https://data.un.org/Data.aspx?q=gdp&d=SNAAMA&f=grID%3a101%3bcurrID%3aUSD%3bpcFlag%3a0
+  un_gdp_current_raw <- read_csv(path_current, col_types = cols()) |>
+    rename(country = `Country or Area`) |>
+    mutate(value_type = "Current")
+
+  un_gdp <- bind_rows(un_gdp_raw, un_gdp_current_raw) |>
+    filter(Item %in% c("Gross Domestic Product (GDP)",
+                       "Exports of goods and services",
+                       "Imports of goods and services")) |>
+    filter(!(country %in% c("Former USSR", "Former Netherlands Antilles",
+                            "Yemen: Former Democratic Yemen",
+                            "United Republic of Tanzania: Zanzibar"))) |>
+    filter(!(country == "Yemen: Former Yemen Arab Republic" & Year >= 1989)) |>
+    filter(!(country == "Former Czechoslovakia" & Year >= 1990)) |>
+    filter(!(country == "Former Yugoslavia" & Year >= 1990)) |>
+    filter(!(country == "Former Ethiopia" & Year >= 1990)) |>
+    mutate(country = recode(country,
+                            "Former Sudan" = "Sudan",
+                            "Yemen: Former Yemen Arab Republic" = "Yemen",
+                            "Former Czechoslovakia" = "Czechia",
+                            "Former Yugoslavia" = "Serbia")) |>
+    mutate(iso3 = countrycode(country, "country.name", "iso3c",
+                              custom_match = c("Kosovo" = "XKK"))) |>
+    left_join(select(skeleton$skeleton_lookup, iso3, gwcode), by = "iso3") |>
+    filter(!is.na(gwcode))
+
+  un_gdp_wide <- un_gdp |>
+    select(gwcode, year = Year, Item, Value, value_type) |>
+    pivot_wider(names_from = c(value_type, Item), values_from = Value) |>
+    rename(exports_constant_2015 = `Constant_Exports of goods and services`,
+           imports_constant_2015 = `Constant_Imports of goods and services`,
+           gdp_constant_2015 = `Constant_Gross Domestic Product (GDP)`,
+           exports_current = `Current_Exports of goods and services`,
+           imports_current = `Current_Imports of goods and services`,
+           gdp_current = `Current_Gross Domestic Product (GDP)`) |>
+    mutate(gdp_deflator_2015 = gdp_current / gdp_constant_2015 * 100) |>
+    mutate(un_trade_pct_gdp = (imports_current + exports_current) / gdp_current)
+
+  # Rescale the 2015 data to 2023 to match the OECD data
+  #
+  # Deflator = current GDP / constant GDP * 100
+  # Current GDP in year_t * (deflator in year_target / deflator in year_t)
+  un_gdp_rescaled <- un_gdp_wide |>
+    left_join(
+      select(
+        filter(un_gdp_wide, year == 2023),
+        gwcode,
+        deflator_target_year = gdp_deflator_2015
+      ),
+      by = "gwcode"
+    ) |>
+    mutate(
+      gdp_deflator_2023 = gdp_deflator_2015 / deflator_target_year * 100,
+      un_gdp_2023 = gdp_current / (gdp_deflator_2023 / 100),
+      un_trade_pct_gdp = (imports_current + exports_current) / gdp_current
+    )
+
+  un_gdp_final <- un_gdp_rescaled |>
+    select(gwcode, year, un_trade_pct_gdp, un_gdp = un_gdp_2023)
+
+  return(un_gdp_final)
+}
