@@ -480,35 +480,58 @@ load_clean_un_gdp <- function(path_constant, path_current, skeleton) {
     mutate(value_type = "Current")
 
   un_gdp <- bind_rows(un_gdp_raw, un_gdp_current_raw) |>
-    filter(Item %in% c("Gross Domestic Product (GDP)",
-                       "Exports of goods and services",
-                       "Imports of goods and services")) |>
-    filter(!(country %in% c("Former USSR", "Former Netherlands Antilles",
-                            "Yemen: Former Democratic Yemen",
-                            "United Republic of Tanzania: Zanzibar"))) |>
+    filter(
+      Item %in%
+        c(
+          "Gross Domestic Product (GDP)",
+          "Exports of goods and services",
+          "Imports of goods and services"
+        )
+    ) |>
+    filter(
+      !(country %in%
+        c(
+          "Former USSR",
+          "Former Netherlands Antilles",
+          "Yemen: Former Democratic Yemen",
+          "United Republic of Tanzania: Zanzibar"
+        ))
+    ) |>
     filter(!(country == "Yemen: Former Yemen Arab Republic" & Year >= 1989)) |>
     filter(!(country == "Former Czechoslovakia" & Year >= 1990)) |>
     filter(!(country == "Former Yugoslavia" & Year >= 1990)) |>
     filter(!(country == "Former Ethiopia" & Year >= 1990)) |>
-    mutate(country = recode(country,
-                            "Former Sudan" = "Sudan",
-                            "Yemen: Former Yemen Arab Republic" = "Yemen",
-                            "Former Czechoslovakia" = "Czechia",
-                            "Former Yugoslavia" = "Serbia")) |>
-    mutate(iso3 = countrycode(country, "country.name", "iso3c",
-                              custom_match = c("Kosovo" = "XKK"))) |>
+    mutate(
+      country = recode(
+        country,
+        "Former Sudan" = "Sudan",
+        "Yemen: Former Yemen Arab Republic" = "Yemen",
+        "Former Czechoslovakia" = "Czechia",
+        "Former Yugoslavia" = "Serbia"
+      )
+    ) |>
+    mutate(
+      iso3 = countrycode(
+        country,
+        "country.name",
+        "iso3c",
+        custom_match = c("Kosovo" = "XKK")
+      )
+    ) |>
     left_join(select(skeleton$skeleton_lookup, iso3, gwcode), by = "iso3") |>
     filter(!is.na(gwcode))
 
   un_gdp_wide <- un_gdp |>
     select(gwcode, year = Year, Item, Value, value_type) |>
     pivot_wider(names_from = c(value_type, Item), values_from = Value) |>
-    rename(exports_constant_2015 = `Constant_Exports of goods and services`,
-           imports_constant_2015 = `Constant_Imports of goods and services`,
-           gdp_constant_2015 = `Constant_Gross Domestic Product (GDP)`,
-           exports_current = `Current_Exports of goods and services`,
-           imports_current = `Current_Imports of goods and services`,
-           gdp_current = `Current_Gross Domestic Product (GDP)`) |>
+    rename(
+      exports_constant_2015 = `Constant_Exports of goods and services`,
+      imports_constant_2015 = `Constant_Imports of goods and services`,
+      gdp_constant_2015 = `Constant_Gross Domestic Product (GDP)`,
+      exports_current = `Current_Exports of goods and services`,
+      imports_current = `Current_Imports of goods and services`,
+      gdp_current = `Current_Gross Domestic Product (GDP)`
+    ) |>
     mutate(gdp_deflator_2015 = gdp_current / gdp_constant_2015 * 100) |>
     mutate(un_trade_pct_gdp = (imports_current + exports_current) / gdp_current)
 
