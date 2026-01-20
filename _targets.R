@@ -57,7 +57,22 @@ list(
   ## Raw data files ----
   tar_target(
     chaudhry_raw_file,
-    here_rel("data", "raw_data", "Chaudhry restrictions", "Updated NGO data.xlsx"),
+    here_rel(
+      "data",
+      "raw_data",
+      "Chaudhry restrictions",
+      "Updated NGO data.xlsx"
+    ),
+    format = "file"
+  ),
+  tar_target(
+    vdem_raw_file,
+    here_rel(
+      "data",
+      "raw_data",
+      "V-Dem-CY-FullOthers-v15_rds",
+      "V-Dem-CY-Full+Others-v15.rds"
+    ),
     format = "file"
   ),
 
@@ -70,11 +85,12 @@ list(
 
   ### OECD and USAID ----
 
-
   ### NGO restrictions ----
   tar_target(chaudhry_clean, load_clean_chaudhry(chaudhry_raw, regulations)),
 
   ### Other data sources ----
+  tar_target(vdem_clean, load_clean_vdem(vdem_raw_file)),
+  tar_target(autocracies, build_autocracies(vdem_clean, skeleton)),
 
   ### Combine and lag data ----
 

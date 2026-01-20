@@ -300,3 +300,77 @@ load_clean_chaudhry <- function(chaudhry_raw, regulations) {
 
   return(chaudhry_clean)
 }
+
+
+# V-Dem -------------------------------------------------------------------
+
+load_clean_vdem <- function(path) {
+  library(countrycode)
+
+  vdem_raw <- read_rds(path) |> as_tibble()
+
+  vdem_clean <- vdem_raw |>
+    filter(year >= 1980) |>
+    select(
+      country_name, year, cowcode = COWcode,
+
+      # Civil society stuff
+      v2cseeorgs,  # CSO entry and exit
+      v2csreprss,  # CSO repression
+      v2cscnsult,  # CSO consultation
+      v2csprtcpt,  # CSO participatory environment
+      v2csgender,  # CSO women's participation
+      v2csantimv,  # CSO anti-system movements
+      v2xcs_ccsi,  # Core civil society index (entry/exit, repression, participatory env)
+
+      # Human rights and politics
+      # Political corruption index (less to more, 0-1) (public sector +
+      # executive + legislative + judicial corruption)
+      v2x_corr,
+      v2x_rule,   # Rule of law index
+      # Rights indexes
+      v2x_civlib, # Civil liberties index
+      v2x_clphy,  # Physical violence index
+      v2x_clpriv, # Private civil liberties index
+      v2x_clpol,  # Political civil liberties index
+      # Democracy
+      e_polity2, v2x_polyarchy, v2x_regime_amb,
+      # Economics and development
+      v2peedueq,  # Educational equality
+      v2pehealth # Health equality
+    ) |>
+    # Get rid of East Germany
+    filter(cowcode != 265) |>
+    mutate(
+      gwcode = countrycode(
+        cowcode,
+        origin = "cown",
+        destination = "gwn",
+        custom_match = c(
+          "403" = 403L,
+          "591" = 591L,
+          "679" = 678L,
+          "935" = 935L,
+          "816" = 816L,
+          "260" = 260L,
+          "315" = 316L
+        )
+      )
+    ) |>
+    # Get rid of Hong Kong, Palestine (West Bank and Gaza), and Somaliland
+    filter(!is.na(cowcode)) |>
+    select(-country_name, -cowcode)
+
+  return(vdem_clean)
+}
+
+build_autocracies <- function(vdem, skeleton) {
+  autocracies <- vdem |> 
+    group_by(gwcode) |> 
+    summarize(avg_row = mean(v2x_regime_amb, na.rm = TRUE)) |> 
+    ungroup()
+
+  autocracies_final <- skeleton$skeleton_lookup |> 
+    left_join(autocracies, by = "gwcode") |> 
+    mutate(autocracy = round(avg_row, 0) <= 4)
+}
