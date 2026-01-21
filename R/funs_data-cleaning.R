@@ -51,6 +51,11 @@ create_regulation_lookup <- function() {
   return(regulations)
 }
 
+load_iati_codes <- function(files) {
+  set_names(files, fs::path_ext_remove(basename(files))) |>
+    map(\(x) read_csv(x, col_types = cols()))
+}
+
 
 # Panel skeleton ----------------------------------------------------------
 
@@ -200,6 +205,107 @@ create_panel_skeleton <- function(consolidated_democracies, chaudhry_raw) {
     arrange(country)
 
   return(lst(panel_skeleton, panel_skeleton_all, microstates, skeleton_lookup))
+}
+
+
+# Aid stuff ---------------------------------------------------------------
+
+# TODO: This is filtering too much! It starts in 2006 :(
+build_oecd_tidy <- function(path) {
+  library(arrow)
+
+  # https://one.oecd.org/document/DCD/DAC(99)20/en/pdf
+  # https://www.rcc.int/seedad/files/user/docs/2016_CRS_purpose_codes.pdf
+  sector_lookup <- tribble(
+    ~lower , ~sector_grouping , ~sector_grouping_nice                           ,
+       100 , "social"         , "Social infrastructure and services"            ,
+       200 , "economic"       , "Economic infrastructure and services"          ,
+       300 , "production"     , "Production sectors"                            ,
+       400 , "multisector"    , "Multisector/Cross-cutting"                     ,
+       500 , "commodity"      , "Commodity aid and general programme assitance" ,
+       600 , "debt"           , "Action relating to debt"                       ,
+       700 , "humanitarian"   , "Humanitarian aid"                              ,
+       910 , "administrative" , "Administrative"                                ,
+       930 , "refugees"       , "Refugees in donor countries"                   ,
+       998 , "unspecified"    , "Unallocated/unspecified"
+  )
+
+  crs_bilateral_raw <- read_parquet("data/raw_data/OECD/CRS.parquet")
+
+  crs_bilateral <- crs_bilateral_raw |>
+    # Lots of filtering!
+    filter(
+      # ODA only
+      category == 10,
+      # Bilateral aid only
+      bi_multi == 1,
+      # Remove regional/unspecified recipients
+      !str_ends(de_recipientcode, "_X"),
+      !str_detect(str_to_lower(recipient_name), "unspecified"),
+      !str_detect(str_to_lower(recipient_name), "regional"),
+      # Remove provisional data and net disbursements
+      is.na(initial_report) | !initial_report %in% c(5, 9),
+      # Remove projects based in donor countries:
+      # - E: Scholarships and student costs in donor countries
+      # - G: Administrative costs not included elsewhere
+      # - H: Other in-donor expenditures
+      !str_starts(aid_t, "[EGH]"),
+      # Remove other projects based in donor countries:
+      # - 91010: Administrative costs (non-sector allocable)
+      # - 93010:93018: Refugees/asylum seekers in donor countries
+      # - 99820: Promotion of development awareness (non-sector allocable)
+      !(purpose_code %in% c(91010, 93010:93018, 99820))
+    ) |>
+    # Add specific categories of aid
+    mutate(
+      # Indicate whether spending goes to or through CSOs
+      # aid_t B01: Core support to NGOs, other private bodies, PPPs and research institutes
+      cso_flow = case_when(
+        aid_t == "B01" &
+          channel_code >= 20000 &
+          channel_code < 30000 ~ "flow_to_csos",
+        aid_t != "B01" &
+          channel_code >= 20000 &
+          channel_code < 30000 ~ "flow_through_csos",
+        .default = NA_character_
+      ),
+      # Indicate what kind of CSO is used
+      # - 20000: NGO/CSO unspecified
+      # - 21xxx: International NGOs
+      # - 22xxx: Donor country-based NGOs
+      # - 23xxx: Developing country-based NGOs
+      cso_channels = case_when(
+        channel_code == 20000 ~ "cso_unspecified",
+        channel_code >= 21000 & channel_code < 22000 ~ "cso_international",
+        channel_code >= 22000 & channel_code < 23000 ~ "cso_donor",
+        channel_code >= 23000 & channel_code < 24000 ~ "cso_developing",
+        .default = NA_character_
+      )
+    ) |>
+    left_join(
+      sector_lookup,
+      join_by(closest(sector_code >= lower))
+    ) |>
+    # Use constant/deflated 2023 values and scale up to full amount instead of millions
+    mutate(commitment = usd_commitment_defl * 1e6)
+
+  crs_tidy <- crs_bilateral |>
+    select(
+      year,
+      donor_iso3 = de_donorcode,
+      donor_name,
+      recipient_iso3 = de_recipientcode,
+      recipient_name,
+      commitment,
+      sector_grouping,
+      sector_code,
+      cso_channels,
+      channel_code,
+      cso_flow,
+      aid_t
+    )
+
+  return(crs_tidy)
 }
 
 

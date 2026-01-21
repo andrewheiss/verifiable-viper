@@ -56,6 +56,15 @@ is_docker <- identical(Sys.getenv("IS_DOCKER"), "TRUE")
 list(
   ## Raw data files ----
   tar_target(
+    oecd_raw_file,
+    here_rel("data", "raw_data", "OECD", "CRS.parquet"),
+    format = "file"
+  ),
+  tar_files(
+    iati_files,
+    fs::dir_ls("data/raw_data/IATI/", glob = "*.csv")
+  ),
+  tar_target(
     chaudhry_raw_file,
     here_rel(
       "data",
@@ -132,8 +141,10 @@ list(
   tar_target(regulations, create_regulation_lookup()),
   tar_target(democracies, create_consolidated_democracies()),
   tar_target(skeleton, create_panel_skeleton(democracies, chaudhry_raw)),
+  tar_target(iati, load_iati_codes(iati_files)),
 
-  ### OECD and USAID ----
+  ### Aid stuff ----
+  tar_target(oecd_tidy, build_oecd_tidy(oecd_raw_file)),
 
   ### NGO restrictions ----
   tar_target(chaudhry_clean, load_clean_chaudhry(chaudhry_raw, regulations)),
