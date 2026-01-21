@@ -210,7 +210,6 @@ create_panel_skeleton <- function(consolidated_democracies, chaudhry_raw) {
 
 # Aid stuff ---------------------------------------------------------------
 
-# TODO: This is filtering too much! It starts in 2006 :(
 build_oecd_tidy <- function(path) {
   library(arrow)
 
@@ -237,23 +236,23 @@ build_oecd_tidy <- function(path) {
     filter(
       # ODA only
       category == 10,
-      # Bilateral aid only
+      # # Bilateral aid only
       bi_multi == 1,
-      # Remove regional/unspecified recipients
+      # # Remove regional/unspecified recipients
       !str_ends(de_recipientcode, "_X"),
       !str_detect(str_to_lower(recipient_name), "unspecified"),
       !str_detect(str_to_lower(recipient_name), "regional"),
-      # Remove provisional data and net disbursements
+      # # Remove provisional data and net disbursements
       is.na(initial_report) | !initial_report %in% c(5, 9),
-      # Remove projects based in donor countries:
-      # - E: Scholarships and student costs in donor countries
-      # - G: Administrative costs not included elsewhere
-      # - H: Other in-donor expenditures
-      !str_starts(aid_t, "[EGH]"),
-      # Remove other projects based in donor countries:
-      # - 91010: Administrative costs (non-sector allocable)
-      # - 93010:93018: Refugees/asylum seekers in donor countries
-      # - 99820: Promotion of development awareness (non-sector allocable)
+      # # Remove projects based in donor countries:
+      # # - E: Scholarships and student costs in donor countries
+      # # - G: Administrative costs not included elsewhere
+      # # - H: Other in-donor expenditures
+      is.na(aid_t) | !str_starts(aid_t, "[EGH]"),
+      # # Remove other projects based in donor countries:
+      # # - 91010: Administrative costs (non-sector allocable)
+      # # - 93010:93018: Refugees/asylum seekers in donor countries
+      # # - 99820: Promotion of development awareness (non-sector allocable)
       !(purpose_code %in% c(91010, 93010:93018, 99820))
     ) |>
     # Add specific categories of aid
