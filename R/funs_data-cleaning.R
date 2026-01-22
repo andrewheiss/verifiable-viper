@@ -231,6 +231,17 @@ build_oecd_tidy <- function(path) {
 
   crs_bilateral_raw <- read_parquet("data/raw_data/OECD/CRS.parquet")
 
+  # In the past, when working with AidData data, we had to filter this to only
+  # look at projects in DAC-eligible countries (I think becuase AidData used
+  # other non-OECD sources?). Now that this is OECD only, we're looking only at
+  # bilateral (bi_multi == 1) ODA (category == 10) to non-regional recipients,
+  # so by definition, it only includes DAC-eligible countries. This is
+  # confirmable by looking at countries that lost DAC eligibility like
+  # Oman---they drop out of the data.
+  #
+  # For additional reference, see
+  # https://www.oecd.org/en/topics/sub-issues/oda-eligibility-and-conditions/dac-list-of-oda-recipients.html#oda-recipients-list
+  # for the currenet list and links to historical lists
   crs_bilateral <- crs_bilateral_raw |>
     # Lots of filtering!
     filter(
