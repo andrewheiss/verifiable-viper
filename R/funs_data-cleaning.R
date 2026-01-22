@@ -494,7 +494,9 @@ load_clean_wdi <- function(skeleton) {
     gdp_percap = "NY.GDP.PCAP.PP.KD", # GDP per capita, ppp (constant 2021 international $)
     gdp = "NY.GDP.MKTP.PP.KD", # GDP, ppp (constant 2021 international $)
     trade_pct_gdp = "NE.TRD.GNFS.ZS", # Trade (% of GDP)
-    population = "SP.POP.TOTL" # Population, total
+    population = "SP.POP.TOTL", # Population, total
+    infant_mortality = "SP.DYN.IMRT.IN", # Infant moratlity rate
+    life_expectancy = "SP.DYN.LE00.IN" # Life expectancy at birth
   )
 
   wdi_raw <- WDI(
@@ -519,7 +521,16 @@ load_clean_wdi <- function(skeleton) {
       region = ifelse(gwcode == 343, "Europe & Central Asia", region),
       income = ifelse(gwcode == 343, "Upper middle income", income)
     ) |>
-    select(country, gwcode, year, region, income, population)
+    select(
+      country,
+      gwcode,
+      year,
+      region,
+      income,
+      population,
+      infant_mortality,
+      life_expectancy
+    )
 
   return(wdi_clean)
 }
@@ -536,12 +547,46 @@ load_clean_un_pop <- function(path, skeleton, wdi) {
 
   # The UN doesn't have population data for Kosovo, so we use WDI data for that
   kosovo_population <- wdi |>
-    select(gwcode, year, population) |>
-    filter(gwcode == 347, year >= 2008)
+    select(gwcode, year, population, infant_mortality, life_expectancy) |>
+    filter(gwcode == 347, year >= 2008) |> 
+    arrange(year)
+
+  # WDI data is missing for 2024 infant mortality and life expectancy, so
+  # we impute it with two different models:
+  #
+  # - For infant mortality, the trend is basically perfectly polynomial,
+  #   so we use mortality ~ year + year^2
+  # - For life expectancy, the trend is fairly linear except for a huge 
+  #   decline in 2020 and 2021 due to COVID, so we ignore those years and 
+  #   predict 2024 based on a hypothetical pandemic-free world
+  infant_model <- lm(
+    infant_mortality ~ year + I(year^2),
+    data = kosovo_population
+  )
+
+  life_exp_model <- lm(
+    life_expectancy ~ year,
+    # Ignore COVID dip
+    data = kosovo_population |> filter(!year %in% c(2020, 2021))
+  )
+
+  kosovo_population <- kosovo_population |>
+    mutate(
+      infant_mortality = ifelse(
+        year == 2024,
+        predict(infant_model, newdata = tibble(year = 2024)),
+        infant_mortality
+      ),
+      life_expectancy = ifelse(
+        year == 2024,
+        predict(life_exp_model, newdata = tibble(year = 2024)),
+        life_expectancy
+      )
+    )
 
   un_pop_raw <- read_excel(
     path,
-    range = "Estimates!A17:M22000",
+    range = "Estimates!A17:AV22000",
     guess_max = 3000
   )
 
@@ -551,7 +596,9 @@ load_clean_un_pop <- function(path, skeleton, wdi) {
       country = `Region, subregion, country or area *`,
       un_code = `Location code`,
       year = Year,
-      population = `Total Population, as of 1 July (thousands)`
+      population = `Total Population, as of 1 July (thousands)`,
+      infant_mortality = `Infant Mortality Rate (infant deaths per 1,000 live births)`,
+      life_expectancy = `Life Expectancy at Birth, both sexes (years)`
     ) |>
     mutate(
       gwcode = countrycode(
@@ -562,7 +609,8 @@ load_clean_un_pop <- function(path, skeleton, wdi) {
       )
     ) |>
     mutate(population = as.numeric(population) * 1000) |> # Values are in 1000s
-    select(gwcode, year, population) |>
+    mutate(across(c(infant_mortality, life_expectancy), as.numeric)) |> 
+    select(gwcode, year, population, infant_mortality, life_expectancy) |>
     bind_rows(kosovo_population) |>
     arrange(gwcode, year)
 
