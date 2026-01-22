@@ -164,11 +164,23 @@ list(
   ),
   tar_target(ucdp_prio_clean, load_clean_ucdp(ucdp_raw_file)),
   tar_target(
-    disasters_summarized,
+    disasters_clean,
     load_clean_disasters(disasters_raw_file, skeleton)
   ),
 
   ### Combine and lag data ----
+  tar_target(
+    aid_panel,
+    build_aid_panel(
+      skeleton,
+      chaudhry_clean,
+      vdem_clean,
+      ucdp_prio_clean,
+      disasters_clean,
+      un_gdp,
+      un_pop
+    )
+  ),
 
   ### Map and Civicus ----
 

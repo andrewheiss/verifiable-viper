@@ -797,3 +797,64 @@ load_clean_disasters <- function(path, skeleton) {
 
   return(disasters_summarized)
 }
+
+
+# Combine, clean, center, and lag everything ------------------------------
+
+build_aid_panel <- function(
+  skeleton,
+  chaudhry_clean,
+  vdem_clean,
+  ucdp_prio_clean,
+  disasters_clean,
+  un_gdp,
+  un_pop
+) {
+  # 6046
+  country_level_data <- skeleton$panel_skeleton |>
+    # filter(!(gwcode %in% democracies$gwcode)) |>
+    left_join(un_gdp, by = join_by(gwcode, year)) |>
+    left_join(un_pop, by = join_by(gwcode, year)) |>
+    mutate(
+      gdpcap = un_gdp / population,
+      gdpcap_log = log(gdpcap),
+      population_log = log(population)
+    ) |>
+    left_join(chaudhry_clean, by = join_by(gwcode, year)) |>
+    # Indicator for Chaudhry data coverage
+    # Chaudhry's Serbia data starts with 2006 and doesn't include pre-2006 stuff,
+    # so we mark those as false. Also, Chaudhry starts in 1992 for Russia and 1993
+    # for Czechia, so we mark those as false too
+    mutate(laws = year %in% 1990:2026) |>
+    mutate(
+      laws = case_when(
+        # Serbia, Czechia, and Russia
+        gwcode == 345 & year <= 2005 ~ FALSE,
+        gwcode == 316 & year <= 1992 ~ FALSE,
+        gwcode == 365 & year <= 1991 ~ FALSE,
+        .default = laws # Otherwise, use FALSE
+      )
+    ) |>
+    left_join(vdem_clean, by = join_by(gwcode, year)) |>
+    left_join(ucdp_prio_clean, by = join_by(gwcode, year)) |>
+    # Treat NAs in conflicts as FALSE
+    mutate(
+      internal_conflict = ifelse(
+        is.na(internal_conflict),
+        FALSE,
+        internal_conflict
+      )
+    ) |>
+    left_join(disasters_clean, by = join_by(gwcode, year)) |>
+    # NAs in disasters are really 0, especially when occurrence is 0
+    mutate(across(starts_with("natural_"), \(x) ifelse(is.na(x), 0, x))) |>
+    # Add indicator for post-Cold War, since all the former Soviet republics
+    # have no GDP data before 1990
+    mutate(post_1989 = year >= 1990)
+
+  # Make sure no extra rows were added through all that joining
+  testthat::expect_equal(
+    nrow(country_level_data),
+    nrow(skeleton$panel_skeleton)
+  )
+}
