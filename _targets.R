@@ -60,7 +60,7 @@ list(
     here_rel("data", "raw_data", "OECD", "CRS.parquet"),
     format = "file"
   ),
-  tar_files(
+  tar_files_input(
     iati_files,
     fs::dir_ls("data/raw_data/IATI/", glob = "*.csv")
   ),
