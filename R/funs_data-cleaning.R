@@ -799,6 +799,72 @@ load_clean_disasters <- function(path, skeleton) {
 }
 
 
+# World map ---------------------------------------------------------------
+
+load_world_map <- function(path) {
+  suppressPackageStartupMessages(library(sf))
+
+  world_map <- read_sf(path) |>
+    filter(ISO_A3 != "ATA") |> 
+    rename(iso3 = ISO_A3_EH) |> 
+    mutate(iso3 = case_when(
+      iso3 == "GRL" ~ "DNK",
+      NAME == "Kosovo" ~ "XKK",
+      .default = iso3
+    ))
+
+  return(world_map)
+}
+
+
+# Civicus Monitor ---------------------------------------------------------
+
+load_clean_civicus <- function() {
+  library(countrycode)
+  library(rvest)
+
+  civicus <- read_html(
+    str_glue(
+      "http://web.archive.org/web/20260120021008/",
+      "https://monitor.civicus.org/widgets/world/"
+    )
+  ) |>
+    html_element(xpath = '//*[@id="countries-list-container"]/div[2]/table') |>
+    html_table() |>
+    filter(Country != "Greenland") |>
+    rename(Rating = `Current rating`) |>
+    mutate(
+      iso3 = countrycode(
+        Country,
+        "country.name",
+        "iso3c",
+        custom_match = c(
+          "Kosovo" = "XXK",
+          "Micronesia" = "FSM",
+          "Somaliland" = "RSL"
+        )
+      ),
+      Score = as.numeric(str_extract(Score, "^(\\d+)/", group = 1)),
+      Rating = factor(
+        Rating,
+        levels = c("Closed", "Repressed", "Obstructed", "Narrowed", "Open"),
+        ordered = TRUE
+      )
+    )
+
+  return(civicus)
+}
+
+create_civicus_map_data <- function(civicus, world_map) {
+  suppressPackageStartupMessages(library(sf))
+
+  map_with_civicus <- world_map |>
+    left_join(civicus, by = join_by(iso3))
+
+  return(map_with_civicus)
+}
+
+
 # Combine, clean, center, and lag everything ------------------------------
 
 build_aid_panel <- function(

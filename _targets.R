@@ -134,6 +134,16 @@ list(
     ),
     format = "file"
   ),
+  tar_target(
+    naturalearth_raw_file,
+    here_rel(
+      "data",
+      "raw_data",
+      "ne_110m_admin_0_countries",
+      "ne_110m_admin_0_countries.shp"
+    ),
+    format = "file"
+  ),
 
   ## Process and clean data ----
   ### Skeletons and lookups ----
@@ -183,6 +193,12 @@ list(
   ),
 
   ### Map and Civicus ----
+  tar_target(world_map, load_world_map(naturalearth_raw_file)),
+  tar_target(civicus_clean, load_clean_civicus()),
+  tar_target(
+    civicus_map_data,
+    create_civicus_map_data(civicus_clean, world_map)
+  ),
 
   ## Variable details ----
 
