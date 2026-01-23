@@ -290,6 +290,16 @@ build_oecd_tidy <- function(path) {
         channel_code >= 22000 & channel_code < 23000 ~ "cso_donor",
         channel_code >= 23000 & channel_code < 24000 ~ "cso_developing",
         .default = NA_character_
+      ),
+      # Indicate whether the aid is contentious or tame
+      contentious = ifelse(
+        sector_code %in%
+          c(
+            151, # Government & Civil Society-general
+            152 # Conflict, Peace & Security
+          ),
+        "high",
+        "low"
       )
     ) |>
     left_join(
@@ -307,6 +317,7 @@ build_oecd_tidy <- function(path) {
       recipient_iso3 = de_recipientcode,
       recipient_name,
       commitment,
+      contentious,
       sector_grouping,
       sector_code,
       cso_channels,
