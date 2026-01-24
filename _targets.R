@@ -193,6 +193,7 @@ list(
       oecd_tidy
     )
   ),
+  tar_target(aid_panel_no_lags, trim_panel(aid_panel_all_joined)),
 
   ### Map and Civicus ----
   tar_target(world_map, load_world_map(naturalearth_raw_file)),

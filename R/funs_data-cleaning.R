@@ -1093,3 +1093,11 @@ build_aid_panel <- function(
 
   return(country_level_data)
 }
+
+lag_data <- function() {
+
+}
+
+trim_panel <- function(df) {
+  df |> filter(year >= 1990 & year < 2024)
+}
