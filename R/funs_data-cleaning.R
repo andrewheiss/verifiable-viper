@@ -212,6 +212,8 @@ create_panel_skeleton <- function(consolidated_democracies, chaudhry_raw) {
 
 build_oecd_tidy <- function(path) {
   library(arrow)
+  library(countrycode)
+  library(states)
 
   # https://one.oecd.org/document/DCD/DAC(99)20/en/pdf
   # https://www.rcc.int/seedad/files/user/docs/2016_CRS_purpose_codes.pdf
@@ -268,24 +270,22 @@ build_oecd_tidy <- function(path) {
     ) |>
     # Add specific categories of aid
     mutate(
-      # Indicate whether spending goes to or through CSOs
-      # aid_t B01: Core support to NGOs, other private bodies, PPPs and research institutes
-      cso_flow = case_when(
-        aid_t == "B01" &
-          channel_code >= 20000 &
-          channel_code < 30000 ~ "flow_to_csos",
-        aid_t != "B01" &
-          channel_code >= 20000 &
-          channel_code < 30000 ~ "flow_through_csos",
-        .default = NA_character_
-      ),
-      # Indicate what kind of CSO is used
+      # Indicate whether spending goes to/through CSOs
+      # aid_t:
+      # - B01: Core support to NGOs, other private bodies, PPPs and 
+      #   research institutes
+      # channel_code:
       # - 20000: NGO/CSO unspecified
       # - 21xxx: International NGOs
       # - 22xxx: Donor country-based NGOs
       # - 23xxx: Developing country-based NGOs
+      cso_flow = coalesce(
+        aid_t %in% "B01" | (channel_code >= 20000 & channel_code < 30000),
+        FALSE
+      ),
+      # Indicate what kind of CSO is used
       cso_channels = case_when(
-        channel_code == 20000 ~ "cso_unspecified",
+        channel_code == 20000 | aid_t %in% "B01" ~ "cso_unspecified",
         channel_code >= 21000 & channel_code < 22000 ~ "cso_international",
         channel_code >= 22000 & channel_code < 23000 ~ "cso_donor",
         channel_code >= 23000 & channel_code < 24000 ~ "cso_developing",
@@ -309,20 +309,50 @@ build_oecd_tidy <- function(path) {
     # Use constant/deflated 2023 values and scale up to full amount instead of millions
     mutate(commitment = usd_commitment_defl * 1e6)
 
+  # There are a bunch of microstates that receive aid, and we don't track most
+  # of them in the NGO data, and lots of them don't even have GW codes (like
+  # Gibraltar, Netherlands Antilles, Turks and Caicos, etc.) but for the sake of
+  # completeness, we create GW codes for as many as possible
+
+  # Get microstate GW codes
+  microstates <- gwstates |>
+    filter(microstate) |>
+    distinct(gwcode_micro = gwcode, country_name) |>
+    as_tibble()
+
+  # Get all the recipient countries, match as many as possible by name with
+  # countrycode(), then join in microstate data and keep whichever is not NA
+  crs_recipient_countries <- crs_bilateral |>
+    distinct(recipient_name, de_recipientcode) |>
+    mutate(
+      gwcode_from_name = countrycode(
+        recipient_name,
+        "country.name",
+        "gwn",
+        custom_match = c("Yemen" = 678),
+        warn = FALSE
+      )
+    ) |>
+    left_join(microstates, by = join_by(recipient_name == country_name)) |>
+    mutate(gwcode = coalesce(gwcode_from_name, gwcode_micro)) |>
+    select(de_recipientcode, recipient_gwcode = gwcode)
+
   crs_tidy <- crs_bilateral |>
+    left_join(crs_recipient_countries, by = join_by(de_recipientcode)) |> 
     select(
       year,
       donor_iso3 = de_donorcode,
       donor_name,
       recipient_iso3 = de_recipientcode,
+      recipient_gwcode,
       recipient_name,
       commitment,
       contentious,
       sector_grouping,
       sector_code,
+      cso_flow,
       cso_channels,
       channel_code,
-      cso_flow,
       aid_t
     )
 
@@ -885,9 +915,46 @@ build_aid_panel <- function(
   ucdp_prio_clean,
   disasters_clean,
   un_gdp,
-  un_pop
+  un_pop,
+  oecd_tidy
 ) {
-  # 6046
+  # Calculate different versions of the aid variables
+  aid_by_country_total <- oecd_tidy |> 
+    group_by(recipient_gwcode, year) |> 
+    summarize(total_oda = sum(commitment, na.rm = TRUE)) |> 
+    ungroup()
+
+  aid_by_country_purpose <- oecd_tidy |>
+    group_by(recipient_gwcode, year, contentious) |>
+    summarize(total_oda = sum(commitment, na.rm = TRUE)) |>
+    ungroup() |>
+    pivot_wider(
+      names_from = contentious,
+      names_prefix = "oda_contentious_",
+      values_from = total_oda,
+      values_fill = 0
+    )
+  
+  aid_by_country_cso <- oecd_tidy |> 
+    group_by(recipient_gwcode, year, cso_flow) |> 
+    summarize(oda_cso_total = sum(commitment, na.rm = TRUE)) |>
+    ungroup() |>
+    filter(!cso_flow) |> 
+    select(-cso_flow)
+
+  aid_by_country_cso_type <- oecd_tidy |> 
+    group_by(recipient_gwcode, year, cso_channels) |> 
+    summarize(total = sum(commitment, na.rm = TRUE)) |>
+    ungroup() |>
+    pivot_wider(
+      names_from = cso_channels,
+      names_prefix = "oda_",
+      values_from = total,
+      values_fill = 0
+    ) |> 
+    select(-oda_NA)
+
+  # Build full panel and merge everything together!
   country_level_data <- skeleton$panel_skeleton |>
     # filter(!(gwcode %in% democracies$gwcode)) |>
     left_join(un_gdp, by = join_by(gwcode, year)) |>
@@ -912,6 +979,40 @@ build_aid_panel <- function(
         .default = laws # Otherwise, use FALSE
       )
     ) |>
+    left_join(
+      aid_by_country_total,
+      by = join_by(gwcode == recipient_gwcode, year)
+    ) |>
+    left_join(
+      aid_by_country_purpose,
+      by = join_by(gwcode == recipient_gwcode, year)
+    ) |>
+    left_join(
+      aid_by_country_cso,
+      by = join_by(gwcode == recipient_gwcode, year)
+    ) |>
+    left_join(
+      aid_by_country_cso_type,
+      by = join_by(gwcode == recipient_gwcode, year)
+    ) |>
+    # Treat NAs in aid as 0
+    mutate(across(contains("oda"), \(x) ifelse(is.na(x), 0, x))) |>
+    # Calculate aid proportions
+    mutate(
+      prop_contentious = oda_contentious_high / total_oda,
+      prop_noncontentious = oda_contentious_low / total_oda,
+      prop_cso = oda_cso_total / total_oda,
+      prop_cso_int = oda_cso_international / total_oda,
+      prop_cso_dom = oda_cso_donor / total_oda,
+      prop_cso_foreign = (oda_cso_international + oda_cso_donor) / total_oda
+    ) |>
+    mutate(across(starts_with("prop_"), \(x) ifelse(is.nan(x), 0, x))) |>
+    mutate(oda_per_capita = total_oda / population) |>
+    mutate(across(
+      c(total_oda, starts_with("oda_")),
+      list(log = \(x) log1p(x))
+    )) |>
+    # Other datasets
     left_join(vdem_clean, by = join_by(gwcode, year)) |>
     left_join(ucdp_prio_clean, by = join_by(gwcode, year)) |>
     # Treat NAs in conflicts as FALSE
