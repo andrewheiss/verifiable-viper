@@ -676,7 +676,11 @@ load_clean_un_pop <- function(path, skeleton, wdi) {
         un_code,
         "un",
         "gwn",
-        custom_match = c("887" = 678)
+        custom_match = c(
+          "688" = 345, # Serbia
+          "887" = 678, # Yemen
+          "704" = 816  # Vietnam
+        )
       )
     ) |>
     mutate(population = as.numeric(population) * 1000) |> # Values are in 1000s
