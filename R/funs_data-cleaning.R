@@ -126,6 +126,8 @@ create_panel_skeleton <- function(consolidated_democracies, chaudhry_raw) {
   # Also, because the World Bank doesn't include it in the WDI, we omit
   # Taiwan (713). We also omit East Germany (265) and South Yemen (680).
   panel_skeleton_all <- state_panel(1980, 2024, partial = "any") |>
+    # Center year at 2000, so 1990 = -10; 2012 = 12
+    mutate(year_c = year - 2000) |> 
     # Remove microstates
     filter(!(gwcode %in% microstates$gwcode)) |>
     # Remove East Germany, South Yemen, Taiwan, the Bahamas, Belize, and Brunei
@@ -491,7 +493,7 @@ load_clean_vdem <- function(path) {
       v2x_clpriv, # Private civil liberties index
       v2x_clpol,  # Political civil liberties index
       # Democracy
-      e_polity2, v2x_polyarchy, v2x_regime_amb,
+      v2x_polyarchy, v2x_regime_amb,
       # Economics and development
       v2peedueq,  # Educational equality
       v2pehealth # Health equality
@@ -518,7 +520,24 @@ load_clean_vdem <- function(path) {
     filter(!is.na(cowcode)) |>
     select(-country_name, -cowcode)
 
-  return(vdem_clean)
+  # `v2x_corr` is only missing data from Bahrain, which oddly has no data from
+  # 1980–2004. Because corruption levels do not really change after 2005, we
+  # impute the average corruption for the country in all previous years.
+  #
+  # Find Bahrain's average corruption
+  avg_corruption_bhr <- vdem_clean |> 
+    filter(gwcode == 692) |>   # Bahrain
+    summarize(avg_corr = mean(v2x_corr, na.rm = TRUE)) |> 
+    pull(avg_corr)
+
+  vdem_fixed <- vdem_clean |> 
+    mutate(v2x_corr = ifelse(
+      is.na(v2x_corr) & gwcode == 692,
+      avg_corruption_bhr,
+      v2x_corr
+    ))
+
+  return(vdem_fixed)
 }
 
 build_autocracies <- function(vdem, skeleton) {
@@ -918,6 +937,8 @@ build_aid_panel <- function(
   un_pop,
   oecd_tidy
 ) {
+  library(slider)
+
   # Calculate different versions of the aid variables
   aid_by_country_total <- oecd_tidy |> 
     group_by(recipient_gwcode, year) |> 
@@ -1028,11 +1049,34 @@ build_aid_panel <- function(
     mutate(across(starts_with("natural_"), \(x) ifelse(is.na(x), 0, x))) |>
     # Add indicator for post-Cold War, since all the former Soviet republics
     # have no GDP data before 1990
-    mutate(post_1989 = year >= 1990)
+    mutate(post_1989 = year >= 1990) |>
+    # Indicate if there was a conflict or disaster in the past 5 years
+    group_by(gwcode) |> 
+    mutate(
+      internal_conflict_past_5 = slide_lgl(
+        internal_conflict,
+        \(x) any(x),  # Any internal conflict in the past 5 years
+        .before = 4, # Current row + 4 previous = 5 year window
+        .complete = FALSE # Allow partial/incomplete windows
+      ),
+      natural_dis_past_5 = slide_lgl(
+        natural_dis_count,
+        \(x) sum(x) >= 5,  # At least 5 natural disasters in the past 5 years
+        .before = 4,
+        .complete = FALSE
+      )
+    ) |> 
+    ungroup() |> 
+    # Get rid of pre-2006 Serbia stuff
+    filter(!(gwcode == 345 & year < 2006)) |> 
+    # Fix Serbia name
+    mutate(country = ifelse(gwcode == 345, "Serbia", country))
 
   # Make sure no extra rows were added through all that joining
   testthat::expect_equal(
     nrow(country_level_data),
-    nrow(skeleton$panel_skeleton)
+    nrow(skeleton$panel_skeleton |> filter(!(gwcode == 345 & year < 2006)))
   )
+
+  return(country_level_data)
 }

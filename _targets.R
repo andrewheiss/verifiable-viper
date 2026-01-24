@@ -21,7 +21,8 @@ options(
 tar_option_set(
   # Packages loaded in every pipeline run
   packages = c("tidyverse"),
-  format = "qs"  # Use qs as the default storage format
+  format = "qs",  # Use qs as the default storage format
+  workspaces = c("build_aid_panel")
 )
 
 ## Set absolute location of targets store ----
@@ -180,7 +181,7 @@ list(
 
   ### Combine and lag data ----
   tar_target(
-    aid_panel,
+    aid_panel_all_joined,
     build_aid_panel(
       skeleton,
       chaudhry_clean,
