@@ -79,6 +79,15 @@ load_chaudhry_raw <- function(path) {
         TRUE ~ ccode
       )
     ) |>
+    # There's a typo with Ethiopia's ccode in 2023! It's written as 531 but
+    # should be 530. Same with Zambia, which is accidentally 552, and Zimbabwe,
+    # which is accidentally 553
+    mutate(ccode = case_when(
+      country == "Ethiopia" & year == 2023 ~ 530,
+      country == "Zambia" & year == 2023 ~ 551,
+      country == "Zimbabwe" & year == 2023 ~ 552,
+      .default = ccode
+    )) |> 
     # Make GW code column
     mutate(
       gwcode = countrycode(
